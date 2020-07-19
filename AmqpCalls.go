@@ -2,39 +2,43 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"log"
 
+	"github.com/houseofcat/turbocookedrabbit/v2/pkg/tcr"
 	"github.com/streadway/amqp"
 )
 
-// AmqpClient holds a connection to the broker
-type AmqpClient struct {
-	conn *amqp.Connection
-}
-
 // ConnectToBroker sets up a connection to an AMQP Broker
-func (a *AmqpClient) ConnectToBroker(connectionString string) {
+func ConnectToBroker(connectionString string) *tcr.ConnectionPool {
 	if connectionString == "" {
 		panic("Connection string not set. Can't connecto to the broker")
 	}
 
-	var err error
-	a.conn, err = amqp.Dial(fmt.Sprintf("%s/", connectionString))
-	if err != nil {
-		failOnError(err, "Failed to connect to broker: "+connectionString)
+	// Create connection config from TCR library to get a connection pool
+	config := &tcr.PoolConfig{
+		ConnectionName:       "ConectorHTTP",
+		URI:                  connectionString,
+		Heartbeat:            30,
+		ConnectionTimeout:    10,
+		SleepOnErrorInterval: 100,
+		MaxConnectionCount:   1,
+		MaxCacheChannelCount: 5,
 	}
+
+	cp, err := tcr.NewConnectionPool(config)
+	if err != nil {
+		failOnError(err, "Could't create pool config")
+	}
+
+	return cp
 }
 
 // NewDeviceRPC calls AMQP to register new device
-func (a *AmqpClient) NewDeviceRPC(jsonObj newRegister) (res string, code int) {
-	// Creating a new connection
-	ch, err := a.conn.Channel()
-	failOnError(err, "Failed to open a channel")
-	defer ch.Close()
+func NewDeviceRPC(cp *tcr.ConnectionPool, jsonObj newRegisterJSON) (res string, code int) {
+	// Getting channel from Connection Pool
+	chanHost := cp.GetChannelFromPool()
 
 	// Declaring consume queue for RPC callback
-	q, err := ch.QueueDeclare(
+	q, err := chanHost.Channel.QueueDeclare(
 		"",
 		false,
 		false,
@@ -45,7 +49,7 @@ func (a *AmqpClient) NewDeviceRPC(jsonObj newRegister) (res string, code int) {
 	failOnError(err, "Failed to declare a queue")
 
 	// Consuming on that queue waiting for response
-	msgs, err := ch.Consume(
+	msgs, err := chanHost.Channel.Consume(
 		q.Name,
 		"",
 		true,
@@ -61,7 +65,9 @@ func (a *AmqpClient) NewDeviceRPC(jsonObj newRegister) (res string, code int) {
 
 	// Call the RPC server registering a new device
 	jsonBytes, err := json.Marshal(jsonObj)
-	err = ch.Publish(
+	failOnError(err, "Couldn't marshal JSON")
+
+	err = chanHost.Channel.Publish(
 		"",
 		"device_management_rpc",
 		false,
@@ -79,29 +85,62 @@ func (a *AmqpClient) NewDeviceRPC(jsonObj newRegister) (res string, code int) {
 		if corrID == msg.CorrelationId {
 			headers := msg.Headers
 			res = string(msg.Body)
-			codeUint, ok := headers["status"].(uint8)
-			log.Println(ok, codeUint)
-			if !ok {
+
+			// Process header
+			switch codeU := headers["status"].(type) {
+			case int:
+				code = codeU
+			case int8:
+				code = int(codeU)
+			case uint8:
+				code = int(codeU)
+			case int16:
+				code = int(codeU)
+			default:
 				code = 0
-			} else {
-				code = int(codeUint)
 			}
 			break
 		}
 	}
 
+	// We have to return channel to the pool
+	cp.ReturnChannel(chanHost, err != nil)
+
 	return
 }
 
 // NewReading calls the HistoricRegistry Service to save a new reading
-func (a *AmqpClient) NewReading() (res string) {
-	return "Pass"
-}
+func NewReading(cp *tcr.ConnectionPool, readings readingsJSON) error {
+	// Getting a channel from the pool
+	chanHost := cp.GetChannelFromPool()
 
-// Close closes the connection to the broker
-func (a *AmqpClient) Close() {
-	if a.conn != nil {
-		log.Printf("%s", "Closing AMQP connection")
-		a.conn.Close()
-	}
+	// Declaring the exchange to use
+	chanHost.Channel.ExchangeDeclare(
+		"new_data",
+		"fanout",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+
+	// Convert JSON object to []bytes
+	jsonBytes, err := json.Marshal(readings)
+	failOnError(err, "Couldn't marshal JSON")
+
+	// Publish the message
+	err = chanHost.Channel.Publish(
+		"new_data",
+		"",
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        jsonBytes,
+		},
+	)
+	cp.ReturnChannel(chanHost, err != nil)
+
+	return err
 }
