@@ -23,6 +23,7 @@ type readingObj struct {
 }
 
 type readingsJSON struct {
-	ObjID    string       `json:"objID" binding:"required"`
-	Readings []readingObj `json:"readings" binding:"required"`
+	ObjID      string       `json:"objID" binding:"required"`
+	OwnerToken string       `json:"ownerToken" binding:"required"`
+	Readings   []readingObj `json:"readings" binding:"required"`
 }

@@ -1,4 +1,4 @@
-module github.com/AMacedoP/ConectorHTTP
+module github.com/MiddlewareIoTPUCP/ConectorHTTP
 
 go 1.14
 
