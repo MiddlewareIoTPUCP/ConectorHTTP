@@ -6,9 +6,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/houseofcat/turbocookedrabbit/v2/pkg/tcr"
+	"github.com/spf13/viper"
 )
 
-func setEnv(cp *tcr.ConnectionPool) gin.HandlerFunc {
+func setEnvForAMQP(cp *tcr.ConnectionPool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set("amqpConnectionPool", cp)
 		c.Next()
@@ -67,10 +68,23 @@ func newReadingHandler(c *gin.Context) {
 func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-	cp := ConnectToBroker("amqp://guest:guest@localhost:5672")
-	r.Use(setEnv(cp))
+
+	// Initializing Viper for env var
+	viper.SetDefault("amqp_url", "amqp://guest:guest@localhost:5672")
+	viper.SetDefault("port", "7000")
+	viper.AutomaticEnv()
+	viper.SetEnvPrefix("conector")
+
+	// Initialing AMQP
+	amqpURL := viper.GetString("amqp_url")
+	cp := ConnectToBroker(amqpURL)
+	r.Use(setEnvForAMQP(cp))
+
 	// Routes to use
 	r.POST("/register_new_device", registerNewDeviceHandler)
 	r.POST("/new_reading", newReadingHandler)
-	r.Run("0.0.0.0:6000")
+
+	// Running the application
+	port := viper.GetString("port")
+	r.Run("0.0.0.0:" + port)
 }
