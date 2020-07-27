@@ -35,4 +35,5 @@
 # Ignore all local history of files
 .history
 
+bin/
 # End of https://www.toptal.com/developers/gitignore/api/go,visualstudiocode
