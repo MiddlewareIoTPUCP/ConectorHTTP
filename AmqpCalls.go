@@ -114,6 +114,12 @@ func NewDeviceRPC(cp *tcr.ConnectionPool, jsonObj newRegisterJSON) (res string, 
 		}
 	}
 
+	// We delete the callback queue
+	_, err = chanHost.Channel.QueueDelete(q.Name, true, true, false)
+	if err == nil {
+		log.Println("Error removing unused queue")
+	}
+
 	// We have to return channel to the pool
 	cp.ReturnChannel(chanHost, err != nil)
 
