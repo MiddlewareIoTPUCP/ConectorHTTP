@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"log"
+	"time"
 
 	"github.com/houseofcat/turbocookedrabbit/v2/pkg/tcr"
 	"github.com/streadway/amqp"
@@ -24,11 +26,20 @@ func ConnectToBroker(connectionString string) *tcr.ConnectionPool {
 		MaxCacheChannelCount: 5,
 	}
 
-	cp, err := tcr.NewConnectionPool(config)
-	if err != nil {
-		failOnError(err, "Could't create pool config")
+	var cp = &tcr.ConnectionPool{}
+	var err error
+	for i := 0; i < 5; i++ {
+		cp, err = tcr.NewConnectionPool(config)
+		if err != nil {
+			if i == 4 {
+				failOnError(err, "Couldn't connect to RabbitMQ")
+			}
+			log.Println("Couldn't connect, retrying in 5 secs")
+			time.Sleep(10 * time.Second)
+		} else {
+			break
+		}
 	}
-
 	return cp
 }
 
@@ -41,7 +52,7 @@ func NewDeviceRPC(cp *tcr.ConnectionPool, jsonObj newRegisterJSON) (res string, 
 	q, err := chanHost.Channel.QueueDeclare(
 		"",
 		false,
-		false,
+		true,
 		true,
 		false,
 		nil,
